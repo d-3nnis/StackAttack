@@ -1,0 +1,11 @@
+{
+    "type": "code",
+    "modid": "stackattack",
+    "name": "StackAttack",
+    "authors": [
+        "beemings"
+    ],
+    "description": "Adds various inventory functions like quickstack, etc (Still a work in progress)",
+    "version": "1.0.0",
+    "dependencies": {}
+}
