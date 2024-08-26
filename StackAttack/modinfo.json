@@ -5,7 +5,7 @@
     "authors": [
         "beemings"
     ],
-    "description": "Adds various inventory functions like quickstack, etc (Still a work in progress)",
-    "version": "1.0.0",
+    "description": "Adds various inventory functions like quickstack, deposit all and widthdraw all.",
+    "version": "1.1.0",
     "dependencies": {}
 }
