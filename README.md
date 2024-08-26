@@ -10,7 +10,7 @@
 
 ## Installation
 ### Easy
-Use 1-click install from the (Vintage Story ModDB)[https://mods.vintagestory.at/stackattack].
+Use 1-click install from the [Vintage Story ModDB](https://mods.vintagestory.at/stackattack).
 
 ### Manual
 1. Download the latest version of Stack Attack from the [releases page](https://github.com/d-3nnis/StackAttack/releases).
