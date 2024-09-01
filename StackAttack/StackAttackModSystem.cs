@@ -7,7 +7,6 @@ using Vintagestory.API.Server;
 using Vintagestory.API.MathTools;
 using StackAttack.assets;
 using Vintagestory.GameContent;
-using System.Reflection.Metadata.Ecma335;
 
 namespace StackAttack
 {
@@ -155,7 +154,12 @@ namespace StackAttack
 
                 foreach (var chestSlot in chestInventory)
                 {
-                    if (!chestSlot.Empty && playerSlot.Itemstack.Collectible.Equals(chestSlot.Itemstack.Collectible))
+                    bool hasBeenWorked = playerSlot.Itemstack.Attributes.HasAttribute("voxels");
+                    bool spoils = playerSlot.Itemstack.Attributes.HasAttribute("transitionstate");
+                    if (!chestSlot.Empty
+                        && playerSlot.Itemstack.Collectible.Equals(chestSlot.Itemstack.Collectible) 
+                        && !hasBeenWorked
+                        && !spoils)
                     {
                         TransferItems(playerSlot, chestSlot);
 
@@ -196,13 +200,6 @@ namespace StackAttack
         {
            var ret = capi.Gui.OpenedGuis.OfType<GuiDialogBlockEntity>().Select(gui => gui.BlockEntityPosition).ToList();
             return ret;
-        }
-
-        private IInventory GetPlayerInventory()
-        {
-            var player = capi.World.Player;
-            var playerInv = player.InventoryManager.GetOwnInventory(GlobalConstants.backpackInvClassName);
-            return playerInv;
         }
 
         private void SendPacket(List<BlockPos> chestBlocks, StackAttackMessageType type)
