@@ -6,6 +6,6 @@
         "beemings"
     ],
     "description": "Adds various inventory functions like quickstack, deposit all and widthdraw all.",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "dependencies": {}
 }
