@@ -52,7 +52,11 @@ namespace StackAttack
 
         private void OnStackAttackPacketRecieved(IServerPlayer fromPlayer, QuickStackPacket packet)
         {
-            IInventory playerInv = fromPlayer.InventoryManager.GetOwnInventory(GlobalConstants.backpackInvClassName);
+            InventoryBase playerInv = fromPlayer.InventoryManager.GetOwnInventory(GlobalConstants.backpackInvClassName) as InventoryBase;
+            if (playerInv == null)
+            {
+                sapi.Logger.Error("Player inventory is null, HOW?");
+            }
             foreach (var chestPos in packet.ChestPositions)
             {
                 var chestBlock = sapi.World.BlockAccessor.GetBlockEntity(chestPos) as BlockEntityGenericTypedContainer;
@@ -66,13 +70,13 @@ namespace StackAttack
                 switch(packet.MessageType)
                 {
                     case StackAttackMessageType.QuickStack:
-                        PerformQuickStack(playerInv, chestInv);
+                        PerformQuickStack(playerInv, chestInv, false);
                         break;
                     case StackAttackMessageType.DepositAll:
-                        PerformDepositAll(playerInv, chestInv);
+                        PerformQuickStack(playerInv, chestInv, true);
                         break;
                     case StackAttackMessageType.WithdrawAll:
-                        PerformWithdrawAll(playerInv, chestInv);
+                        PerformQuickStack(chestInv, playerInv, true);
                         break;
                     default:
                         sapi.Logger.Error("Unknown message type: {0}", packet.MessageType);
@@ -80,6 +84,7 @@ namespace StackAttack
                 }
             }
         }
+
         private void TransferItems(ItemSlot from, ItemSlot to, bool allowEmpty = false)
         {
             if (from == null || to == null) return;
@@ -91,7 +96,7 @@ namespace StackAttack
             // maxStackSize will be null if the slot is allowed to be empty.
             if (maxStackSize == null && !allowEmpty) return;
 
-            if(allowEmpty)
+            if(allowEmpty && to.Itemstack == null)
             {
                 to.Itemstack = from.Itemstack.Clone();
                 from.Itemstack = null;
@@ -107,80 +112,70 @@ namespace StackAttack
             from.MarkDirty();
         }
 
-        private void PerformDepositAll(IInventory playerInventory, InventoryBase chestInventory)
+        public static bool ItemSpoils(ItemStack itemstack)
         {
-            foreach (var playerSlot in playerInventory)
+            if (itemstack == null) return false;
+            return itemstack.Attributes.HasAttribute("transitionstate");
+        }
+
+        public static bool ItemHasBeenWorked(ItemStack itemstack)
+        {
+            if (itemstack == null) return false;
+            return itemstack.Attributes.HasAttribute("voxels");
+        }
+
+        private void CheckMergeItems(ItemSlot from, ItemSlot to)
+        {
+            bool hasBeenWorked = ItemHasBeenWorked(from.Itemstack) || ItemHasBeenWorked(to.Itemstack);
+            bool spoils = ItemSpoils(from.Itemstack) || ItemSpoils(to.Itemstack);
+            if (!to.Empty
+                && from.Itemstack.Collectible.Equals(to.Itemstack.Collectible) 
+                && !hasBeenWorked
+                && !spoils)
             {
-                if (playerSlot.Empty) continue;
-                if (playerSlot is ItemSlotBackpack) continue;
-                foreach (var chestSlot in chestInventory)
-                {
-                    if (chestSlot.Empty || playerSlot.Itemstack.Collectible.Equals(chestSlot.Itemstack.Collectible))
-                    {
-                        TransferItems(playerSlot, chestSlot, true);
-                        break;
-                    }
-                }
+                TransferItems(from, to, false);
             }
         }
 
-        private void PerformWithdrawAll(IInventory playerInventory, InventoryBase chestInventory)
+        private void PerformQuickStack(InventoryBase fromInv, InventoryBase toInv, bool moveAll = false)
         {
-            foreach(var chestSlot in chestInventory)
+            HashSet<CollectibleObject> chestCollectibles = new HashSet<CollectibleObject>();
+            if(!moveAll)
             {
-                if (chestSlot.Empty) continue;
-                foreach (var playerSlot in playerInventory)
-                {
-                if (playerSlot is ItemSlotBackpack) continue;
-                    if (playerSlot.Empty)
-                    {
-                        TransferItems(chestSlot, playerSlot, true);
-                        break;
-                    }
-                }
+                chestCollectibles = toInv
+                    .Where(slot => !slot.Empty)  // Filter out empty slots
+                    .Select(slot => slot.Itemstack.Collectible)  // Select the collectible types
+                    .ToHashSet();
             }
-        }
 
-        private void PerformQuickStack(IInventory playerInventory, InventoryBase chestInventory)
-        {
-            HashSet<CollectibleObject> chestCollectibles = chestInventory
-                .Where(slot => !slot.Empty)  // Filter out empty slots
-                .Select(slot => slot.Itemstack.Collectible)  // Select the collectible types
-                .ToHashSet();
-
-            foreach (var playerSlot in playerInventory)
+            foreach (var fromSlot in fromInv)
             {
-                if (playerSlot.Empty) continue;
-                if (playerSlot is ItemSlotBackpack) continue;
-
-                foreach (var chestSlot in chestInventory)
+                // Skip empty slots and backpack slots
+                if (fromSlot.Empty) continue;
+                if (fromSlot is ItemSlotBackpack) continue;
+                
+                // Try to fill partial stacks in the target inventory
+                foreach (var toSlot in toInv)
                 {
-                    bool hasBeenWorked = playerSlot.Itemstack.Attributes.HasAttribute("voxels");
-                    bool spoils = playerSlot.Itemstack.Attributes.HasAttribute("transitionstate");
-                    if (!chestSlot.Empty
-                        && playerSlot.Itemstack.Collectible.Equals(chestSlot.Itemstack.Collectible) 
-                        && !hasBeenWorked
-                        && !spoils)
-                    {
-                        TransferItems(playerSlot, chestSlot);
-
-                        if (playerSlot.Empty) break;
-                    }
+                    // Skip backpack slots in target
+                    if (toSlot is ItemSlotBackpack) continue;
+                    CheckMergeItems(fromSlot, toSlot);
+                    if (fromSlot.Empty) break;
                 }
 
-                // second pass for empty slots
-                if (!playerSlot.Empty)
+                // First pass could not empty this fromSlot, try to find an empty slot
+                if (!fromSlot.Empty)
                 {
-                    if (chestCollectibles.Contains(playerSlot.Itemstack.Collectible))
+                    if (chestCollectibles.Contains(fromSlot.Itemstack.Collectible) || moveAll)
                     {
                         // Find the first empty slot and place the items there
-                        foreach (var chestSlot in chestInventory)
+                        foreach (var toSlot in toInv)
                         {
-                            if (chestSlot.Empty)
+                            if (toSlot is ItemSlotBackpack) continue;
+                            if (toSlot.Empty)
                             {
                                 // Move the player's stack to the empty slot
-                                TransferItems(playerSlot, chestSlot, true);
-
+                                TransferItems(fromSlot, toSlot, true);
                                 // Break after transferring the stack to an empty slot
                                 break;
                             }
@@ -189,12 +184,6 @@ namespace StackAttack
                 }
 
             }
-        }
-
-        private List<InventoryGeneric> GetOpenInventories()
-        {
-            var ret = capi.Gui.OpenedGuis.OfType<GuiDialogBlockEntity>().Select(gui => gui.Inventory).OfType<InventoryGeneric>().Where(inv => inv is InventoryGeneric).ToList();
-            return ret;
         }
 
         private List<BlockPos> GetOpenInventoriesPos()
