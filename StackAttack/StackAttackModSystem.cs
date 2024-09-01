@@ -131,6 +131,7 @@ namespace StackAttack
                 if (chestSlot.Empty) continue;
                 foreach (var playerSlot in playerInventory)
                 {
+                if (playerSlot is ItemSlotBackpack) continue;
                     if (playerSlot.Empty)
                     {
                         TransferItems(chestSlot, playerSlot, true);

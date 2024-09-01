@@ -38,13 +38,5 @@ namespace StackAttack.assets
         public List<BlockPos> ChestPositions;
         [ProtoMember(2)]
         public StackAttackMessageType MessageType;
-        /*
-        [ProtoMember(1)]
-        public int PlayerSlotIndex { get; set; }
-        [ProtoMember(2)]
-        public int ChestSlotIndex { get; set; }
-        [ProtoMember(3)]
-        public int TransferAmount { get; set; }
-        */
     }
 }
