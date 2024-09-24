@@ -126,15 +126,27 @@ namespace StackAttack
 
         private void CheckMergeItems(ItemSlot from, ItemSlot to)
         {
+            if(from == null || to == null) return;
+            if(from.Empty || to.Empty) return;
             bool hasBeenWorked = ItemHasBeenWorked(from.Itemstack) || ItemHasBeenWorked(to.Itemstack);
             bool spoils = ItemSpoils(from.Itemstack) || ItemSpoils(to.Itemstack);
+            bool matches = ItemStackMatches(from, to);
             if (!to.Empty
-                && from.Itemstack.Collectible.Equals(to.Itemstack.Collectible) 
+                && matches 
                 && !hasBeenWorked
                 && !spoils)
             {
                 TransferItems(from, to, false);
             }
+        }
+
+        private bool ItemStackMatches(ItemSlot from, ItemSlot to)
+        {
+            if (from == null) return false;
+            if (to == null) return false;
+
+            bool match = from.Itemstack.Collectible.Equals(from.Itemstack, to.Itemstack);
+            return match;
         }
 
         private void PerformQuickStack(InventoryBase fromInv, InventoryBase toInv, bool moveAll = false)
@@ -188,7 +200,7 @@ namespace StackAttack
 
         private List<BlockPos> GetOpenInventoriesPos()
         {
-           var ret = capi.Gui.OpenedGuis.OfType<GuiDialogBlockEntity>().Select(gui => gui.BlockEntityPosition).ToList();
+            var ret = capi.Gui.OpenedGuis.OfType<GuiDialogBlockEntity>().Select(gui => gui.BlockEntityPosition).ToList();
             return ret;
         }
 
