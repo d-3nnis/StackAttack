@@ -14,6 +14,7 @@ namespace StackAttack.assets
         QuickStack,
         DepositAll,
         WithdrawAll,
+        SortAll,
     }
     [ProtoContract]
     public class QuickStackPacket

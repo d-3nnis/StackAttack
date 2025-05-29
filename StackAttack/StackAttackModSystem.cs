@@ -31,6 +31,8 @@ namespace StackAttack
             api.Input.SetHotKeyHandler("depositall", DepositAllHotkey);
             api.Input.RegisterHotKey("withdrawall", "Withdraw All", GlKeys.B, HotkeyType.InventoryHotkeys, false, false, true);
             api.Input.SetHotKeyHandler("withdrawall", WithdrawAllHotkey);
+            api.Input.RegisterHotKey("sortall", "Sort All Open Inventories", GlKeys.N, HotkeyType.InventoryHotkeys);
+            api.Input.SetHotKeyHandler("sortall", SortAllHotkey);
         }
 
         IClientNetworkChannel clientChannel;
@@ -48,15 +50,66 @@ namespace StackAttack
             sapi = api;
             base.StartServerSide(api);
             serverChannel = api.Network.GetChannel(CHANNEL_NAME).SetMessageHandler<QuickStackPacket>(new NetworkClientMessageHandler<QuickStackPacket>(this.OnStackAttackPacketRecieved));
+
+        }
+
+        private void SortInventory(InventoryBase inv)
+        {
+            if (inv == null) { return; }
+            var sortedSlots = inv
+                .Where(slot => !slot.Empty)
+                .Where(slot => !(slot is ItemSlotBackpack)) 
+                //.OrderBy(slot => slot.Itemstack.Collectible.Code.ToString())
+                .OrderBy(slot => slot.Itemstack.Collectible.Id)
+                .ToList();
+
+            // we should also combine identical stacks
+            /*
+            sortedSlots = sortedSlots
+                .GroupBy(slot => slot.Itemstack.Collectible.Id)
+                .Select(g => g.First())
+                .ToList();
+            */
+            
+            sapi.Logger.Error("Sorting inventory: {0} slots before sorting, {1} slots after sorting", inv.Count, sortedSlots.Count);
+            //sapi.Logger.Error("Sorting inventory: {0} slots before sorting, {1} slots after sorting", inv.ToString(), sortedSlots.ToString());
+            // Clear the inventory and re-add sorted items
+            //inv.Clear();
+            foreach (var (index, slot) in sortedSlots.Select((v,i) => (i,v)))
+            {
+                sapi.Logger.Error("index: {0}, slot: {1}", index, slot.Itemstack?.Collectible?.Code?.ToString() ?? "null");
+                //inv[index] = slot;
+            }
+            //inv.MarkDirty();
         }
 
         private void OnStackAttackPacketRecieved(IServerPlayer fromPlayer, QuickStackPacket packet)
         {
             InventoryBase playerInv = fromPlayer.InventoryManager.GetOwnInventory(GlobalConstants.backpackInvClassName) as InventoryBase;
-            if (playerInv == null)
+            if (playerInv != null)
+            {
+                switch(packet.MessageType)
+                {
+                    case StackAttackMessageType.SortAll:
+                        SortInventory(playerInv);
+                        break;
+                    case StackAttackMessageType.QuickStack:
+                        goto case StackAttackMessageType.WithdrawAll; // fall through
+                    case StackAttackMessageType.DepositAll:
+                        goto case StackAttackMessageType.WithdrawAll; // fall through
+                    case StackAttackMessageType.WithdrawAll:
+                        sapi.Logger.Debug("No-op");
+                        break;
+                    default:
+                        sapi.Logger.Error("Unknown message type: {0}", packet.MessageType);
+                        break;
+                }
+            } else
             {
                 sapi.Logger.Error("Player inventory is null, HOW?");
             }
+
+            // handle chests
             foreach (var chestPos in packet.ChestPositions)
             {
                 var chestBlock = sapi.World.BlockAccessor.GetBlockEntity(chestPos) as BlockEntityGenericTypedContainer;
@@ -77,6 +130,9 @@ namespace StackAttack
                         break;
                     case StackAttackMessageType.WithdrawAll:
                         PerformQuickStack(chestInv, playerInv, true);
+                        break;
+                    case StackAttackMessageType.SortAll:
+                        SortInventory(chestInv);
                         break;
                     default:
                         sapi.Logger.Error("Unknown message type: {0}", packet.MessageType);
@@ -224,6 +280,12 @@ namespace StackAttack
         private bool WithdrawAllHotkey(KeyCombination keyComb)
         {
             ClientStackManipOperation(StackAttackMessageType.WithdrawAll);
+            return true;
+        }
+
+        private bool SortAllHotkey(KeyCombination keyComb)
+        {
+            ClientStackManipOperation(StackAttackMessageType.SortAll);
             return true;
         }
 
