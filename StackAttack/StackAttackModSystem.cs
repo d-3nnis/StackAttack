@@ -96,6 +96,12 @@ namespace StackAttack
             serverChannel = api.Network.GetChannel(CHANNEL_NAME).SetMessageHandler<QuickStackPacket>(new NetworkClientMessageHandler<QuickStackPacket>(this.OnStackAttackPacketRecieved));
         }
 
+        private static readonly HashSet<Type> SupportedContainerTypes = new HashSet<Type>
+        {
+            typeof(BlockEntityGenericTypedContainer),
+            typeof(BlockEntityCrate)
+        };
+
         private List<BlockPos> GetNearbyStorageContainers(IServerPlayer player, int radius)
         {
             if(sapi == null)
@@ -103,18 +109,20 @@ namespace StackAttack
                 throw new InvalidOperationException("GetNearbyStorageContainers should be called from server side only.");
             }
             IBlockAccessor blockAccessor = sapi.World.BlockAccessor;
-            BlockPos minPos = player.Entity.Pos.XYZ.AsBlockPos.AddCopy(-radius, -radius, -radius);
-            BlockPos maxPos = player.Entity.Pos.XYZ.AsBlockPos.AddCopy(radius, radius, radius);
-            List<BlockPos> containerPos = new List<BlockPos>();
+            BlockPos playerPos = player.Entity.Pos.XYZ.AsBlockPos;
+            BlockPos minPos = playerPos.AddCopy(-radius, -radius, -radius);
+            BlockPos maxPos = playerPos.AddCopy(radius, radius, radius);
+            List<BlockPos> containerPositions = new List<BlockPos>();
             blockAccessor.SearchBlocks(minPos, maxPos, (block, pos) =>
             {
+                if (playerPos.DistanceTo(pos) > radius) return true;
                 var be = blockAccessor.GetBlockEntity(pos);
-                if(be is BlockEntityGenericTypedContainer container && container.Inventory != null)
+                if (be is BlockEntityContainer container && container.Inventory != null && SupportedContainerTypes.Contains(be.GetType()))
                 {
-                    containerPos.Add(pos.Copy());
+                    containerPositions.Add(pos.Copy());
                     sapi.Logger.Debug(
-                        "[StackAttack] Found container at {0}: {1} (Type: {2}, Slots: {3})", 
-                        pos, 
+                        "[StackAttack] Found container at {0}: {1} (Type: {2}, Slots: {3})",
+                        pos,
                         block.Code?.ToString() ?? "Unknown",
                         be.GetType().Name,
                         container.Inventory.Count
@@ -123,24 +131,24 @@ namespace StackAttack
                 return true;
             });
             sapi.Logger.Debug(
-                "[StackAttack] Player {0} found {1} nearby containers within radius {2}", 
+                "[StackAttack] Player {0} found {1} nearby containers within radius {2}",
                 player.PlayerName,
-                containerPos.Count,
+                containerPositions.Count,
                 radius
             );
-            
-            return containerPos;
+
+            return containerPositions;
         }
 
         private void OnStackAttackPacketRecieved(IServerPlayer fromPlayer, QuickStackPacket packet)
         {
-            List<BlockPos> chestPositions;
+            List<BlockPos> containerPositions;
             if(packet.MessageType == StackAttackMessageType.QuickStackNearby)
             {
-                chestPositions = GetNearbyStorageContainers(fromPlayer, config.QuickStackNearbyRadius);
+                containerPositions = GetNearbyStorageContainers(fromPlayer, config.QuickStackNearbyRadius);
             } else
             {
-                chestPositions = packet.ChestPositions;
+                containerPositions = packet.ChestPositions;
             }
 
             InventoryBase playerInv = fromPlayer.InventoryManager.GetOwnInventory(GlobalConstants.backpackInvClassName) as InventoryBase;
@@ -149,33 +157,33 @@ namespace StackAttack
                 sapi.Logger.Error("Player inventory is null, HOW?");
                 return;
             }
-            foreach (var chestPos in chestPositions)
+            foreach (var containerPos in containerPositions)
             {
-                if(CanPlayerAccessChest(fromPlayer, chestPos) == false)
+                if(CanPlayerAccessContainer(fromPlayer, containerPos) == false)
                 {
-                    sapi.Logger.Debug("Player {0} cannot access chest at {1}", fromPlayer.PlayerName, chestPos);
+                    sapi.Logger.Debug("Player {0} cannot access container at {1}", fromPlayer.PlayerName, containerPos);
                     continue;
                 }
 
-                var chestBlock = sapi.World.BlockAccessor.GetBlockEntity(chestPos) as BlockEntityGenericTypedContainer;
-                if (chestBlock == null)
+                var containerBlock = sapi.World.BlockAccessor.GetBlockEntity(containerPos) as BlockEntityContainer;
+                if (containerBlock == null)
                 {
-                    sapi.Logger.Debug("Block at {0} is not a container, was it removed?", chestPos);
+                    sapi.Logger.Debug("Block at {0} is not a container, was it removed?", containerPos);
                     continue;
                 }
-                InventoryBase chestInv = chestBlock.Inventory;
-                if (chestInv == null) continue;
+                InventoryBase containerInv = containerBlock.Inventory;
+                if (containerInv == null) continue;
                 switch(packet.MessageType)
                 {
                     case StackAttackMessageType.QuickStack:
                     case StackAttackMessageType.QuickStackNearby:
-                        PerformQuickStack(playerInv, chestInv, false);
+                        PerformQuickStack(playerInv, containerInv, false);
                         break;
                     case StackAttackMessageType.DepositAll:
-                        PerformQuickStack(playerInv, chestInv, true);
+                        PerformQuickStack(playerInv, containerInv, true);
                         break;
                     case StackAttackMessageType.WithdrawAll:
-                        PerformQuickStack(chestInv, playerInv, true);
+                        PerformQuickStack(containerInv, playerInv, true);
                         break;
                     default:
                         sapi.Logger.Error("Unknown message type: {0}", packet.MessageType);
@@ -239,21 +247,13 @@ namespace StackAttack
             }
         }
 
-        private bool CanPlayerAccessChest(IServerPlayer player, BlockPos containerPos)
+        private bool CanPlayerAccessContainer(IServerPlayer player, BlockPos containerPos)
         {
-            if (player.Entity.Pos.AsBlockPos.DistanceTo(containerPos) > config.QuickStackNearbyRadius)
-            {
-                return false;
-            }
-            
-            var be = sapi.World.BlockAccessor.GetBlockEntity(containerPos);
-            EnumWorldAccessResponse landClaim = sapi.World.Claims.TestAccess(player, containerPos, EnumBlockAccessFlags.Use);
-            if(landClaim != EnumWorldAccessResponse.Granted)
-            {
-                return false;
-            }
+            BlockPos playerPos = player.Entity.Pos.XYZ.AsBlockPos;
+            if (playerPos.DistanceTo(containerPos) > config.QuickStackNearbyRadius) return false;
 
-            return true;
+            EnumWorldAccessResponse landClaim = sapi.World.Claims.TestAccess(player, containerPos, EnumBlockAccessFlags.Use);
+            return landClaim == EnumWorldAccessResponse.Granted;
         }
 
         private bool ItemStackMatches(ItemSlot from, ItemSlot to)
