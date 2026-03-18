@@ -109,11 +109,9 @@ namespace StackAttack
                 throw new InvalidOperationException("GetNearbyStorageContainers should be called from server side only.");
             }
             IBlockAccessor blockAccessor = sapi.World.BlockAccessor;
-            BlockPos playerPos = player.Entity.Pos.XYZ.AsBlockPos;
             List<BlockPos> containerPos = new List<BlockPos>();
-            blockAccessor.SearchBlocks(playerPos.AddCopy(-radius, -radius, -radius), playerPos.AddCopy(radius, radius, radius), (block, pos) =>
+            blockAccessor.SearchBlocks(player.Entity.Pos.XYZ.AsBlockPos.AddCopy(-radius, -radius, -radius), player.Entity.Pos.XYZ.AsBlockPos.AddCopy(radius, radius, radius), (block, pos) =>
             {
-                if (playerPos.DistanceTo(pos) > radius) return true;
                 var be = blockAccessor.GetBlockEntity(pos);
                 if (be is BlockEntityContainer container && container.Inventory != null && SupportedContainerTypes.Contains(be.GetType()))
                 {
