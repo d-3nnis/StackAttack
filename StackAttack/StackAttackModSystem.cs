@@ -169,14 +169,17 @@ namespace StackAttack
                 }
                 InventoryBase containerInv = containerBlock.Inventory;
                 if (containerInv == null) continue;
+                bool isCrate = containerBlock is BlockEntityCrate;
                 switch(packet.MessageType)
                 {
                     case StackAttackMessageType.QuickStack:
                     case StackAttackMessageType.QuickStackNearby:
-                        PerformQuickStack(playerInv, containerInv, false);
+                        if (isCrate) PerformQuickStackCrate(playerInv, containerInv);
+                        else PerformQuickStack(playerInv, containerInv, false);
                         break;
                     case StackAttackMessageType.DepositAll:
-                        PerformQuickStack(playerInv, containerInv, true);
+                        if (isCrate) PerformQuickStackCrate(playerInv, containerInv);
+                        else PerformQuickStack(playerInv, containerInv, true);
                         break;
                     case StackAttackMessageType.WithdrawAll:
                         PerformQuickStack(containerInv, playerInv, true);
@@ -261,52 +264,75 @@ namespace StackAttack
             return match;
         }
 
-        private void PerformQuickStack(InventoryBase fromInv, InventoryBase toInv, bool moveAll = false)
+        private void PerformQuickStack(InventoryBase fromInv, InventoryBase toInv, bool moveAll)
         {
             HashSet<CollectibleObject> chestCollectibles = new HashSet<CollectibleObject>();
-            if(!moveAll)
+            if (!moveAll)
             {
-            chestCollectibles = toInv
-                .Where(slot => !slot.Empty)  // Filter out empty slots
-                .Select(slot => slot.Itemstack.Collectible)  // Select the collectible types
-                .ToHashSet();
+                chestCollectibles = toInv
+                    .Where(slot => !slot.Empty)
+                    .Select(slot => slot.Itemstack.Collectible)
+                    .ToHashSet();
             }
 
             foreach (var fromSlot in fromInv)
             {
-                // Skip empty slots and backpack slots
                 if (fromSlot.Empty) continue;
                 if (fromSlot is ItemSlotBackpack) continue;
-                
-                // Try to fill partial stacks in the target inventory
+
                 foreach (var toSlot in toInv)
                 {
-                    // Skip backpack slots in target
                     if (toSlot is ItemSlotBackpack) continue;
                     CheckMergeItems(fromSlot, toSlot);
                     if (fromSlot.Empty) break;
                 }
 
-                // First pass could not empty this fromSlot, try to find an empty slot
-                if (!fromSlot.Empty)
+                if (!fromSlot.Empty && (moveAll || chestCollectibles.Contains(fromSlot.Itemstack.Collectible)))
                 {
-                    if (chestCollectibles.Contains(fromSlot.Itemstack.Collectible) || moveAll)
+                    foreach (var toSlot in toInv)
                     {
-                        // Find the first empty slot and place the items there
-                        foreach (var toSlot in toInv)
+                        if (toSlot is ItemSlotBackpack) continue;
+                        if (toSlot.Empty)
                         {
-                            if (toSlot is ItemSlotBackpack) continue;
-                            if (toSlot.Empty)
-                            {
-                                // Move the player's stack to the empty slot
-                                TransferItems(fromSlot, toSlot, true);
-                                // Break after transferring the stack to an empty slot
-                                break;
-                            }
+                            TransferItems(fromSlot, toSlot, true);
+                            break;
                         }
                     }
                 }
+            }
+        }
 
+        private void PerformQuickStackCrate(InventoryBase fromInv, InventoryBase toInv)
+        {
+            foreach (var fromSlot in fromInv)
+            {
+                if (fromSlot.Empty) continue;
+                if (fromSlot is ItemSlotBackpack) continue;
+
+                foreach (var toSlot in toInv)
+                {
+                    if (toSlot is ItemSlotBackpack) continue;
+                    if (toSlot.Empty) continue;
+                    if (!fromSlot.Itemstack.Equals(sapi.World, toSlot.Itemstack, GlobalConstants.IgnoredStackAttributes)) continue;
+                    CheckMergeItems(fromSlot, toSlot);
+                    if (fromSlot.Empty) break;
+                }
+
+                bool crateHasMatchingStack = toInv.Any(slot => !slot.Empty
+                    && fromSlot.Itemstack.Equals(sapi.World, slot.Itemstack, GlobalConstants.IgnoredStackAttributes));
+
+                if (!fromSlot.Empty && crateHasMatchingStack)
+                {
+                    foreach (var toSlot in toInv)
+                    {
+                        if (toSlot is ItemSlotBackpack) continue;
+                        if (toSlot.Empty)
+                        {
+                            TransferItems(fromSlot, toSlot, true);
+                            break;
+                        }
+                    }
+                }
             }
         }
 
