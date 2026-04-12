@@ -96,6 +96,12 @@ namespace StackAttack
             serverChannel = api.Network.GetChannel(CHANNEL_NAME).SetMessageHandler<QuickStackPacket>(new NetworkClientMessageHandler<QuickStackPacket>(this.OnStackAttackPacketRecieved));
         }
 
+        private static readonly HashSet<Type> SupportedContainerTypes = new HashSet<Type>
+        {
+            typeof(BlockEntityGenericTypedContainer),
+            typeof(BlockEntityCrate)
+        };
+
         private List<BlockPos> GetNearbyStorageContainers(IServerPlayer player, int radius)
         {
             if(sapi == null)
@@ -103,18 +109,16 @@ namespace StackAttack
                 throw new InvalidOperationException("GetNearbyStorageContainers should be called from server side only.");
             }
             IBlockAccessor blockAccessor = sapi.World.BlockAccessor;
-            BlockPos minPos = player.Entity.Pos.XYZ.AsBlockPos.AddCopy(-radius, -radius, -radius);
-            BlockPos maxPos = player.Entity.Pos.XYZ.AsBlockPos.AddCopy(radius, radius, radius);
             List<BlockPos> containerPos = new List<BlockPos>();
-            blockAccessor.SearchBlocks(minPos, maxPos, (block, pos) =>
+            blockAccessor.SearchBlocks(player.Entity.Pos.XYZ.AsBlockPos.AddCopy(-radius, -radius, -radius), player.Entity.Pos.XYZ.AsBlockPos.AddCopy(radius, radius, radius), (block, pos) =>
             {
                 var be = blockAccessor.GetBlockEntity(pos);
-                if(be is BlockEntityGenericTypedContainer container && container.Inventory != null)
+                if (be is BlockEntityContainer container && container.Inventory != null && SupportedContainerTypes.Contains(be.GetType()))
                 {
                     containerPos.Add(pos.Copy());
                     sapi.Logger.Debug(
-                        "[StackAttack] Found container at {0}: {1} (Type: {2}, Slots: {3})", 
-                        pos, 
+                        "[StackAttack] Found container at {0}: {1} (Type: {2}, Slots: {3})",
+                        pos,
                         block.Code?.ToString() ?? "Unknown",
                         be.GetType().Name,
                         container.Inventory.Count
@@ -123,12 +127,12 @@ namespace StackAttack
                 return true;
             });
             sapi.Logger.Debug(
-                "[StackAttack] Player {0} found {1} nearby containers within radius {2}", 
+                "[StackAttack] Player {0} found {1} nearby containers within radius {2}",
                 player.PlayerName,
                 containerPos.Count,
                 radius
             );
-            
+
             return containerPos;
         }
 
@@ -151,31 +155,34 @@ namespace StackAttack
             }
             foreach (var chestPos in chestPositions)
             {
-                if(CanPlayerAccessChest(fromPlayer, chestPos) == false)
+                if(CanPlayerAccessContainer(fromPlayer, chestPos) == false)
                 {
-                    sapi.Logger.Debug("Player {0} cannot access chest at {1}", fromPlayer.PlayerName, chestPos);
+                    sapi.Logger.Debug("Player {0} cannot access container at {1}", fromPlayer.PlayerName, chestPos);
                     continue;
                 }
 
-                var chestBlock = sapi.World.BlockAccessor.GetBlockEntity(chestPos) as BlockEntityGenericTypedContainer;
-                if (chestBlock == null)
+                var containerBlock = sapi.World.BlockAccessor.GetBlockEntity(chestPos) as BlockEntityContainer;
+                if (containerBlock == null)
                 {
                     sapi.Logger.Debug("Block at {0} is not a container, was it removed?", chestPos);
                     continue;
                 }
-                InventoryBase chestInv = chestBlock.Inventory;
-                if (chestInv == null) continue;
+                InventoryBase containerInv = containerBlock.Inventory;
+                if (containerInv == null) continue;
+                bool isCrate = containerBlock is BlockEntityCrate;
                 switch(packet.MessageType)
                 {
                     case StackAttackMessageType.QuickStack:
                     case StackAttackMessageType.QuickStackNearby:
-                        PerformQuickStack(playerInv, chestInv, false);
+                        if (isCrate) PerformQuickStackCrate(playerInv, containerInv);
+                        else PerformQuickStack(playerInv, containerInv, false);
                         break;
                     case StackAttackMessageType.DepositAll:
-                        PerformQuickStack(playerInv, chestInv, true);
+                        if (isCrate) PerformQuickStackCrate(playerInv, containerInv);
+                        else PerformQuickStack(playerInv, containerInv, true);
                         break;
                     case StackAttackMessageType.WithdrawAll:
-                        PerformQuickStack(chestInv, playerInv, true);
+                        PerformQuickStack(containerInv, playerInv, true);
                         break;
                     default:
                         sapi.Logger.Error("Unknown message type: {0}", packet.MessageType);
@@ -239,21 +246,13 @@ namespace StackAttack
             }
         }
 
-        private bool CanPlayerAccessChest(IServerPlayer player, BlockPos containerPos)
+        private bool CanPlayerAccessContainer(IServerPlayer player, BlockPos containerPos)
         {
-            if (player.Entity.Pos.AsBlockPos.DistanceTo(containerPos) > config.QuickStackNearbyRadius)
-            {
-                return false;
-            }
-            
-            var be = sapi.World.BlockAccessor.GetBlockEntity(containerPos);
-            EnumWorldAccessResponse landClaim = sapi.World.Claims.TestAccess(player, containerPos, EnumBlockAccessFlags.Use);
-            if(landClaim != EnumWorldAccessResponse.Granted)
-            {
-                return false;
-            }
+            BlockPos playerPos = player.Entity.Pos.XYZ.AsBlockPos;
+            if (playerPos.DistanceTo(containerPos) > config.QuickStackNearbyRadius) return false;
 
-            return true;
+            EnumWorldAccessResponse landClaim = sapi.World.Claims.TestAccess(player, containerPos, EnumBlockAccessFlags.Use);
+            return landClaim == EnumWorldAccessResponse.Granted;
         }
 
         private bool ItemStackMatches(ItemSlot from, ItemSlot to)
@@ -265,52 +264,75 @@ namespace StackAttack
             return match;
         }
 
-        private void PerformQuickStack(InventoryBase fromInv, InventoryBase toInv, bool moveAll = false)
+        private void PerformQuickStack(InventoryBase fromInv, InventoryBase toInv, bool moveAll)
         {
             HashSet<CollectibleObject> chestCollectibles = new HashSet<CollectibleObject>();
-            if(!moveAll)
+            if (!moveAll)
             {
-            chestCollectibles = toInv
-                .Where(slot => !slot.Empty)  // Filter out empty slots
-                .Select(slot => slot.Itemstack.Collectible)  // Select the collectible types
-                .ToHashSet();
+                chestCollectibles = toInv
+                    .Where(slot => !slot.Empty)
+                    .Select(slot => slot.Itemstack.Collectible)
+                    .ToHashSet();
             }
 
             foreach (var fromSlot in fromInv)
             {
-                // Skip empty slots and backpack slots
                 if (fromSlot.Empty) continue;
                 if (fromSlot is ItemSlotBackpack) continue;
-                
-                // Try to fill partial stacks in the target inventory
+
                 foreach (var toSlot in toInv)
                 {
-                    // Skip backpack slots in target
                     if (toSlot is ItemSlotBackpack) continue;
                     CheckMergeItems(fromSlot, toSlot);
                     if (fromSlot.Empty) break;
                 }
 
-                // First pass could not empty this fromSlot, try to find an empty slot
-                if (!fromSlot.Empty)
+                if (!fromSlot.Empty && (moveAll || chestCollectibles.Contains(fromSlot.Itemstack.Collectible)))
                 {
-                    if (chestCollectibles.Contains(fromSlot.Itemstack.Collectible) || moveAll)
+                    foreach (var toSlot in toInv)
                     {
-                        // Find the first empty slot and place the items there
-                        foreach (var toSlot in toInv)
+                        if (toSlot is ItemSlotBackpack) continue;
+                        if (toSlot.Empty)
                         {
-                            if (toSlot is ItemSlotBackpack) continue;
-                            if (toSlot.Empty)
-                            {
-                                // Move the player's stack to the empty slot
-                                TransferItems(fromSlot, toSlot, true);
-                                // Break after transferring the stack to an empty slot
-                                break;
-                            }
+                            TransferItems(fromSlot, toSlot, true);
+                            break;
                         }
                     }
                 }
+            }
+        }
 
+        private void PerformQuickStackCrate(InventoryBase fromInv, InventoryBase toInv)
+        {
+            foreach (var fromSlot in fromInv)
+            {
+                if (fromSlot.Empty) continue;
+                if (fromSlot is ItemSlotBackpack) continue;
+
+                foreach (var toSlot in toInv)
+                {
+                    if (toSlot is ItemSlotBackpack) continue;
+                    if (toSlot.Empty) continue;
+                    if (!fromSlot.Itemstack.Equals(sapi.World, toSlot.Itemstack, GlobalConstants.IgnoredStackAttributes)) continue;
+                    CheckMergeItems(fromSlot, toSlot);
+                    if (fromSlot.Empty) break;
+                }
+
+                bool crateHasMatchingStack = toInv.Any(slot => !slot.Empty
+                    && fromSlot.Itemstack.Equals(sapi.World, slot.Itemstack, GlobalConstants.IgnoredStackAttributes));
+
+                if (!fromSlot.Empty && crateHasMatchingStack)
+                {
+                    foreach (var toSlot in toInv)
+                    {
+                        if (toSlot is ItemSlotBackpack) continue;
+                        if (toSlot.Empty)
+                        {
+                            TransferItems(fromSlot, toSlot, true);
+                            break;
+                        }
+                    }
+                }
             }
         }
 
